@@ -1,3 +1,4 @@
+import time
 from google import genai
 from google.genai import types
 from pydantic import BaseModel, Field
@@ -17,8 +18,7 @@ class PageExtractionResult(BaseModel):
 
 def process_book_page(image: Image.Image, api_key: str) -> List[dict]:
     """
-    Sends page image to Gemini 3.6 Flash to locate yellow-highlighted Ukrainian words,
-    extract context sentences, lemmatize words, and return structured JSON.
+    Sends page image to Gemini 2.5 Flash with retry handling for temporary 503 capacity spikes.
     """
     client = genai.Client(api_key=api_key)
     
@@ -30,17 +30,26 @@ def process_book_page(image: Image.Image, api_key: str) -> List[dict]:
     4. Provide short English glosses, translations, and part of speech tags.
     """
 
-    response = client.models.generate_content(
-        model='gemini-3.6-flash',
-        contents=[image, prompt],
-        config=types.GenerateContentConfig(
-            response_mime_type="application/json",
-            response_schema=PageExtractionResult,
-            temperature=0.1
-        )
-    )
+    # Retry up to 3 times if Google returns a temporary 503 error
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            response = client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=[image, prompt],
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=PageExtractionResult,
+                    temperature=0.1
+                )
+            )
+            break
+        except Exception as e:
+            if ("503" in str(e) or "UNAVAILABLE" in str(e)) and attempt < max_retries - 1:
+                time.sleep(3)
+                continue
+            raise e
 
-    # Parse output into list of dicts with fixed Capybara deck defaults
     parsed_result = PageExtractionResult.model_validate_json(response.text)
     
     cards_data = []
