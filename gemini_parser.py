@@ -18,7 +18,7 @@ class PageExtractionResult(BaseModel):
 
 def process_book_page(image: Image.Image, api_key: str) -> List[dict]:
     """
-    Sends page image to Gemini 2.5 Flash with retry handling for temporary 503 capacity spikes.
+    Sends page image to Gemini 3.6 Flash with retry handling for temporary 503 capacity spikes.
     """
     client = genai.Client(api_key=api_key)
     
@@ -35,7 +35,7 @@ def process_book_page(image: Image.Image, api_key: str) -> List[dict]:
     for attempt in range(max_retries):
         try:
             response = client.models.generate_content(
-                model='gemini-2.5-flash',
+                model='gemini-3.6-flash',
                 contents=[image, prompt],
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json",
