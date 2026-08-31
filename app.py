@@ -36,8 +36,9 @@ if uploaded_files:
             progress_bar = st.progress(0)
             
             with st.spinner("Processing images concurrently..."):
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    # Submit all image processing tasks at once
+                # max_workers=2 prevents triggering the Gemini Free Tier 429 rate limit
+                with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+                    # Submit all image processing tasks
                     future_to_file = {
                         executor.submit(process_book_page, Image.open(file), api_key): file 
                         for file in uploaded_files
