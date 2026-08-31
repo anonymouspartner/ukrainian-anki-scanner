@@ -25,7 +25,7 @@ def optimize_image(img: Image.Image) -> Image.Image:
 
 def process_book_page(image: Image.Image, api_key: str) -> List[dict]:
     """
-    Sends optimized page image to Claude Sonnet 5 with retry handling.
+    Sends optimized page image to Claude Sonnet with retry handling and thinking block bypass.
     """
     client = Anthropic(api_key=api_key)
     optimized_image = optimize_image(image)
@@ -62,7 +62,7 @@ def process_book_page(image: Image.Image, api_key: str) -> List[dict]:
     for attempt in range(max_retries):
         try:
             response = client.messages.create(
-                model='claude-sonnet-5',
+                model='claude-3-5-sonnet-latest',
                 max_tokens=2048,
                 messages=[
                     {
@@ -84,7 +84,14 @@ def process_book_page(image: Image.Image, api_key: str) -> List[dict]:
                     }
                 ]
             )
-            response_text = response.content[0].text
+            
+            # Skip ThinkingBlocks and isolate the actual text response
+            response_text = ""
+            for block in response.content:
+                if block.type == 'text':
+                    response_text = block.text
+                    break
+                    
             break
         except Exception as e:
             if attempt < max_retries - 1:
