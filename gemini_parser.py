@@ -24,7 +24,7 @@ def optimize_image(img: Image.Image) -> Image.Image:
 
 def process_book_page(image: Image.Image, api_key: str) -> List[dict]:
     """
-    Sends optimized page image to Gemini 3.6 Flash with retry handling.
+    Sends optimized page image to Gemini 3.6 Flash with retry handling for Free Tier limits.
     """
     client = genai.Client(api_key=api_key)
     optimized_image = optimize_image(image)
@@ -37,7 +37,7 @@ def process_book_page(image: Image.Image, api_key: str) -> List[dict]:
     4. Provide short English glosses, translations, and part of speech tags.
     """
 
-    max_retries = 3
+    max_retries = 4
     for attempt in range(max_retries):
         try:
             response = client.models.generate_content(
@@ -51,8 +51,10 @@ def process_book_page(image: Image.Image, api_key: str) -> List[dict]:
             )
             break
         except Exception as e:
-            if ("503" in str(e) or "UNAVAILABLE" in str(e)) and attempt < max_retries - 1:
-                time.sleep(3)
+            error_msg = str(e)
+            # Catch both 503 capacity errors and 429 Rate Limit errors
+            if any(err in error_msg for err in ["503", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED"]) and attempt < max_retries - 1:
+                time.sleep(12) # Wait out the 10-second penalty from the Free Tier
                 continue
             raise e
 
