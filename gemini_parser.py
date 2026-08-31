@@ -1,4 +1,5 @@
 import time
+import re
 from google import genai
 from google.genai import types
 from pydantic import BaseModel, Field
@@ -24,7 +25,7 @@ def optimize_image(img: Image.Image) -> Image.Image:
 
 def process_book_page(image: Image.Image, api_key: str) -> List[dict]:
     """
-    Sends optimized page image to Gemini 3.6 Flash with retry handling for Free Tier limits.
+    Sends optimized page image to Gemini 3.6 Flash with dynamic retry handling for Free Tier limits.
     """
     client = genai.Client(api_key=api_key)
     optimized_image = optimize_image(image)
@@ -37,7 +38,7 @@ def process_book_page(image: Image.Image, api_key: str) -> List[dict]:
     4. Provide short English glosses, translations, and part of speech tags.
     """
 
-    max_retries = 4
+    max_retries = 5
     for attempt in range(max_retries):
         try:
             response = client.models.generate_content(
@@ -52,10 +53,18 @@ def process_book_page(image: Image.Image, api_key: str) -> List[dict]:
             break
         except Exception as e:
             error_msg = str(e)
-            # Catch both 503 capacity errors and 429 Rate Limit errors
-            if any(err in error_msg for err in ["503", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED"]) and attempt < max_retries - 1:
-                time.sleep(12) # Wait out the 10-second penalty from the Free Tier
-                continue
+            if attempt < max_retries - 1:
+                # Dynamically wait the exact amount of time Google requests for rate limits
+                if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg:
+                    match = re.search(r'Please retry in ([\d\.]+)s', error_msg)
+                    # Use requested time + a 2-second buffer to guarantee the penalty clears
+                    delay = float(match.group(1)) + 2 if match else 30
+                    time.sleep(delay)
+                    continue
+                # Standard 10-second wait for capacity spikes
+                elif "503" in error_msg or "UNAVAILABLE" in error_msg:
+                    time.sleep(10)
+                    continue
             raise e
 
     parsed_result = PageExtractionResult.model_validate_json(response.text)
