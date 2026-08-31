@@ -62,7 +62,7 @@ def process_book_page(image: Image.Image, api_key: str) -> List[dict]:
     for attempt in range(max_retries):
         try:
             response = client.messages.create(
-                model='claude-3-5-sonnet-20241022',
+                model='claude-sonnet-5',
                 max_tokens=2048,
                 messages=[
                     {
