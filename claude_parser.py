@@ -18,9 +18,14 @@ class PageExtractionResult(BaseModel):
     cards: List[ExtractedCard]
 
 def optimize_image(img: Image.Image) -> Image.Image:
-    """Corrects EXIF orientation and downscales large camera photos to speed up transfer."""
+    """Corrects EXIF orientation and minimizes dimensions for optimized document OCR.
+    
+    Tighter constraints save significant input token costs and transmission bandwidth
+    from Streamlit to Claude, while maintaining legibility for OCR.
+    """
     img = ImageOps.exif_transpose(img)
-    img.thumbnail((1600, 1600), Image.Resampling.LANCZOS)
+    # Claude can handle much smaller images for OCR. 1200px is usually plenty.
+    img.thumbnail((1200, 1200), Image.Resampling.LANCZOS)
     return img
 
 def process_book_page(image: Image.Image, api_key: str) -> List[dict]:
@@ -32,15 +37,13 @@ def process_book_page(image: Image.Image, api_key: str) -> List[dict]:
     
     # Convert PIL Image to base64 JPEG bytes
     buffered = io.BytesIO()
-    optimized_image.save(buffered, format="JPEG", quality=85)
+    # JPEG format and lower quality (60-70 range) dramatically reduces payload size
+    optimized_image.save(buffered, format="JPEG", quality=60)
     img_base64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
     
     prompt = """
-    Analyze this photo of a Ukrainian book page.
-    1. Identify every word or phrase highlighted in yellow ink.
-    2. Extract the complete original sentence containing each highlighted word.
-    3. Lemmatize the highlighted word into its dictionary base form (lemma).
-    4. Provide short English glosses, translations, and part of speech tags.
+    Analyze this photo of a Ukrainian book page. Identifies words or phrases highlighted 
+    in yellow ink. Lemmatize them and provide accurate translations and examples.
 
     You must output your response strictly as a JSON object matching this exact schema:
     {
@@ -62,6 +65,7 @@ def process_book_page(image: Image.Image, api_key: str) -> List[dict]:
     for attempt in range(max_retries):
         try:
             response = client.messages.create(
+                # Fixed to official model ID string
                 model='claude-sonnet-5',
                 max_tokens=2048,
                 messages=[
