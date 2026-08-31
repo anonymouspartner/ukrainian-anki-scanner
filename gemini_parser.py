@@ -3,7 +3,7 @@ from google import genai
 from google.genai import types
 from pydantic import BaseModel, Field
 from typing import List
-from PIL import Image
+from PIL import Image, ImageOps
 
 class ExtractedCard(BaseModel):
     lemma: str = Field(description="Dictionary base form of the highlighted Ukrainian word (e.g., 'письменниця' instead of 'письменницею')")
@@ -16,11 +16,18 @@ class ExtractedCard(BaseModel):
 class PageExtractionResult(BaseModel):
     cards: List[ExtractedCard]
 
+def optimize_image(img: Image.Image) -> Image.Image:
+    """Corrects EXIF orientation and downscales large camera photos to speed up transfer."""
+    img = ImageOps.exif_transpose(img)
+    img.thumbnail((1600, 1600), Image.Resampling.LANCZOS)
+    return img
+
 def process_book_page(image: Image.Image, api_key: str) -> List[dict]:
     """
-    Sends page image to Gemini 3.6 Flash with retry handling for temporary 503 capacity spikes.
+    Sends optimized page image to Gemini 3.6 Flash with retry handling.
     """
     client = genai.Client(api_key=api_key)
+    optimized_image = optimize_image(image)
     
     prompt = """
     Analyze this photo of a Ukrainian book page.
@@ -30,13 +37,12 @@ def process_book_page(image: Image.Image, api_key: str) -> List[dict]:
     4. Provide short English glosses, translations, and part of speech tags.
     """
 
-    # Retry up to 3 times if Google returns a temporary 503 error
     max_retries = 3
     for attempt in range(max_retries):
         try:
             response = client.models.generate_content(
                 model='gemini-3.6-flash',
-                contents=[image, prompt],
+                contents=[optimized_image, prompt],
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json",
                     response_schema=PageExtractionResult,
