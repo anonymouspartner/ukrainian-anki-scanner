@@ -10,10 +10,16 @@ st.set_page_config(page_title="Ukrainian Book to Anki", page_icon="📚", layout
 st.title("📚 Ukrainian Book Highlight Scanner for Anki")
 st.write("Upload photos of highlighted book pages to extract vocabulary directly into your **Capybara** Anki CSV format.")
 
-# Sidebar API Key Setup
+# Sidebar API Key Setup (Checks st.secrets for persistence)
 st.sidebar.header("Configuration")
-api_key_input = st.sidebar.text_input("Gemini API Key", type="password", help="Get a free key at aistudio.google.com")
-api_key = api_key_input or os.environ.get("GEMINI_API_KEY")
+secret_key = ""
+if "GEMINI_API_KEY" in st.secrets:
+    secret_key = st.secrets["GEMINI_API_KEY"]
+elif os.environ.get("GEMINI_API_KEY"):
+    secret_key = os.environ.get("GEMINI_API_KEY")
+
+api_key_input = st.sidebar.text_input("Gemini API Key", value=secret_key, type="password", help="Get a free key at aistudio.google.com")
+api_key = api_key_input or secret_key
 
 if "cards" not in st.session_state:
     st.session_state.cards = []
@@ -29,18 +35,32 @@ if uploaded_files:
             st.session_state.cards = []
             progress_bar = st.progress(0)
             
-            for idx, uploaded_file in enumerate(uploaded_files):
-                try:
-                    image = Image.open(uploaded_file)
-                    st.info(f"Processing image: {uploaded_file.name}...")
-                    extracted = process_book_page(image, api_key)
-                    st.session_state.cards.extend(extracted)
-                except Exception as e:
-                    st.error(f"Error processing {uploaded_file.name}: {e}")
-                
-                progress_bar.progress((idx + 1) / len(uploaded_files))
+            with st.spinner("Processing images concurrently..."):
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    # Submit all image processing tasks at once
+                    future_to_file = {
+                        executor.submit(process_book_page, Image.open(file), api_key): file 
+                        for file in uploaded_files
+                    }
+                    
+                    completed_count = 0
+                    total_files = len(uploaded_files)
+                    
+                    # Gather results as each thread finishes
+                    for future in concurrent.futures.as_completed(future_to_file):
+                        file = future_to_file[future]
+                        try:
+                            extracted = future.result()
+                            st.session_state.cards.extend(extracted)
+                            st.success(f"Processed {file.name}: Found {len(extracted)} vocabulary words.")
+                        except Exception as e:
+                            st.error(f"Error processing {file.name}: {e}")
+                        
+                        # Update progress bar
+                        completed_count += 1
+                        progress_bar.progress(completed_count / total_files)
             
-            st.success(f"Processing complete! Found {len(st.session_state.cards)} vocabulary words.")
+            st.success(f"Processing complete! Found {len(st.session_state.cards)} total vocabulary words.")
 
 # Review and Download Section
 if st.session_state.cards:
