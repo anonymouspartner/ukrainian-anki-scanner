@@ -1,0 +1,50 @@
+name: check
+
+# Runs on every push and PR so a broken scanner is caught before it reaches
+# main. The suite mocks the Anthropic transport end to end, so this workflow
+# needs NO API key and makes no network request to the model — never add one.
+#
+# The check that earns its keep here is tests/test_app_smoke.py. A Streamlit
+# script only executes when a session connects, so importing app.py (or curling
+# the port) will not notice a crash at render time. That is exactly how a
+# StreamlitSecretNotFoundError reached main and broke the documented Codespaces
+# flow for every fresh clone.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.11 matches .devcontainer; 3.12 guards against the version a host
+        # like Streamlit Community Cloud may pick.
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      # Catches a syntax error in any file, including one no test imports.
+      - name: Byte-compile every source file
+        run: python -m compileall -q app.py anki_export.py claude_parser.py tests
+
+      - name: Run tests
+        run: python -m pytest tests -v

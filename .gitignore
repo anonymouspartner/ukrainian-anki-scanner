@@ -1,0 +1,8 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Streamlit secrets hold an API key — never commit them.
+.streamlit/secrets.toml
