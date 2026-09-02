@@ -1,0 +1,4 @@
+# Test-only dependencies. The suite mocks the Anthropic transport, so running it
+# needs no API key and makes no network request.
+-r requirements.txt
+pytest>=8.0.0

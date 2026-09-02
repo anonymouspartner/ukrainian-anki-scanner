@@ -29,11 +29,14 @@ the Capybara note type.
 
 ```text
 .
-├── app.py              # Streamlit UI, batch execution, dedup, CSV export
-├── claude_parser.py    # Image prep, Claude API call, schema validation
-├── gemini_parser.py    # Unused alternate backend (see "Known issues")
-├── requirements.txt    # Python dependencies
-└── README.md           # This file
+├── app.py                    # Streamlit UI and batch execution
+├── anki_export.py            # Dedup and Capybara-note-type CSV rendering
+├── claude_parser.py          # Image prep, Claude API call, schema validation
+├── gemini_parser.py          # Unused alternate backend (see "Known issues")
+├── tests/                    # pytest suite (no API key needed)
+├── requirements.txt          # Runtime dependencies
+├── requirements-dev.txt      # Adds pytest
+└── .github/workflows/        # CI: byte-compile + tests on 3.11 and 3.12
 ```
 
 ---
@@ -72,6 +75,32 @@ collapsed to spaces, since Anki reads one note per line.
 The review table also shows a **source** column naming the photo each word came
 from. It is deliberately *not* exported — it exists so a suspicious card can be
 checked against the original page.
+
+---
+
+## 🧪 Tests
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+
+The suite mocks the Anthropic transport, so it needs **no API key** and makes no
+network request. It covers three things:
+
+* **Export rules** (`tests/test_anki_export.py`) — the ways a row can be
+  silently mangled on the way into Anki: a lemma starting with `#` read as an
+  import directive, a newline splitting one note across two lines, a blank row
+  added in the editor, cross-page duplicates.
+* **The model call** (`tests/test_claude_parser.py`) — the request shape and
+  schema, plus each failure mode: a truncated response, a rejected key, a server
+  error, a rate limit.
+* **That the app renders** (`tests/test_app_smoke.py`) — a Streamlit script only
+  executes when a session connects, so importing `app.py` or curling the port
+  will not notice a crash at render time. This runs the script the way a browser
+  session does.
+
+CI runs the same commands on every push and pull request.
 
 ---
 
