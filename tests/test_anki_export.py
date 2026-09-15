@@ -14,6 +14,7 @@ from anki_export import (
     dedupe_cards,
     export_filename,
     export_rows,
+    export_stamp,
 )
 
 
@@ -147,27 +148,58 @@ def test_clean_field(value, expected):
     assert clean_field(value) == expected
 
 
-# --- export_filename ----------------------------------------------------------
+# --- export_stamp / export_filename -------------------------------------------
 
-def test_filename_is_not_the_same_from_one_export_to_the_next():
-    # A repeated name collides with the copy already in the phone's download
-    # folder, and Android Chrome meets every collision with a "Download file
-    # again?" dialog — the reason this function exists.
-    first = export_filename("csv", dt.datetime(2026, 9, 15, 18, 49, 3))
-    second = export_filename("csv", dt.datetime(2026, 9, 15, 18, 49, 4))
+def test_the_name_does_not_change_while_the_export_does_not():
+    # The regression this exists for: Streamlit identifies a download by
+    # hashing its bytes *and* its filename, so a name holding the current time
+    # mints a new file on every rerun, orphans the previous one, and leaves the
+    # on-screen button pointing at a URL its GC has deleted. The tap then does
+    # nothing at all.
+    cache = {}
+    csv_text, _ = build_csv(pd.DataFrame([card()]))
+    first = export_stamp(csv_text, cache, dt.datetime(2026, 9, 15, 18, 49, 3))
+    later = export_stamp(csv_text, cache, dt.datetime(2026, 9, 15, 19, 30, 0))
+    assert first == later == "20260915-184903"
+
+
+def test_the_name_changes_once_the_cards_change():
+    # And the reason it is a timestamp at all: a repeated name collides with
+    # the copy already in the download folder, which is what makes Android
+    # Chrome ask "Download file again?" on every tap.
+    cache = {}
+    one, _ = build_csv(pd.DataFrame([card()]))
+    two, _ = build_csv(pd.DataFrame([card(), card(lemma="слово")]))
+    first = export_stamp(one, cache, dt.datetime(2026, 9, 15, 18, 49, 3))
+    second = export_stamp(two, cache, dt.datetime(2026, 9, 15, 18, 55, 12))
     assert first != second
 
 
+def test_an_edit_in_the_review_table_earns_a_new_name():
+    cache = {}
+    before, _ = build_csv(pd.DataFrame([card()]))
+    after, _ = build_csv(pd.DataFrame([card(lemma_translation="tome")]))
+    assert export_stamp(before, cache, dt.datetime(2026, 9, 15, 1, 0, 0)) != \
+        export_stamp(after, cache, dt.datetime(2026, 9, 15, 1, 0, 1))
+
+
+def test_the_stamp_store_holds_one_entry_however_long_the_session_runs():
+    # It lives in session state and is touched on every rerun, so it must not
+    # grow a row per keystroke.
+    cache = {}
+    for n in range(50):
+        csv_text, _ = build_csv(pd.DataFrame([card(lemma=f"слово{n}")]))
+        export_stamp(csv_text, cache)
+    assert set(cache) == {"key", "stamp"}
+
+
 def test_filename_keeps_the_extension_it_is_given():
-    stamp = dt.datetime(2026, 9, 15, 18, 49, 3)
-    assert export_filename("csv", stamp) == "ukrainian_vocab_capybara_20260915-184903.csv"
-    assert export_filename(".apkg", stamp).endswith("_20260915-184903.apkg")
+    assert export_filename("csv", "20260915-184903") == "ukrainian_vocab_capybara_20260915-184903.csv"
+    assert export_filename(".apkg", "20260915-184903").endswith("_20260915-184903.apkg")
 
 
-def test_filename_sorts_chronologically_in_a_download_folder():
-    earlier = export_filename("csv", dt.datetime(2026, 9, 15, 9, 5, 0))
-    later = export_filename("csv", dt.datetime(2026, 9, 15, 18, 49, 0))
-    assert earlier < later
+def test_filenames_sort_chronologically_in_a_download_folder():
+    assert export_filename("csv", "20260915-090500") < export_filename("csv", "20260915-184900")
 
 
 # --- export_rows --------------------------------------------------------------

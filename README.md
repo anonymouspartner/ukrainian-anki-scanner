@@ -86,6 +86,11 @@ the note type it uses. Two details make repeat exports behave:
 * **A note's identity is its lemma and part of speech.** Fix a translation and
   re-export and Anki updates the existing note, rather than importing a second
   one. (genanki's default is to hash every field, which does the opposite.)
+* **The build is hermetic.** genanki stamps both the ids it generates and the
+  zip entries it writes with the wall clock, so the same cards would otherwise
+  come out as different bytes every time. `build_apkg` pins both, making the
+  package a pure function of the cards it holds — which is also what keeps
+  Streamlit from re-registering the download on every rerun (see "Filenames").
 
 That id matching cuts the other way too: if you *already* have a Capybara note
 type, this one is a different id and so imports beside it under the same name.
@@ -112,6 +117,21 @@ the copy already in the download folder — and Android Chrome answers a collisi
 with a **"Download file again?"** dialog on every single tap. The timestamp also
 keeps several scanning sessions apart in the folder.
 
+The timestamp is taken **once per distinct export**, not per render, and both
+files share it. This is load-bearing, not cosmetic. Streamlit identifies a
+download by hashing its bytes together with its filename and serves it at a URL
+derived from that hash; it reruns the whole script on every interaction, and
+garbage-collects files the current run no longer references. A name holding the
+current time therefore registers a *new* file on each rerun and orphans the one
+the on-screen button still points at — so the next tap fetches a URL that now
+404s, and the browser reports nothing at all. The same trap applies to the
+bytes, which is why the package build is hermetic (see above).
+
+The cost of that stability: re-downloading an export you have not changed reuses
+its name, so Android asks "Download file again?" in that one case — correctly,
+since it is the identical file. Change or add a single card and the name moves
+on.
+
 ### The `source` column
 
 The review table shows a **source** column naming the photo each word came from.
@@ -137,15 +157,19 @@ network request. It covers four things:
   a filename.
 * **The deck package** (`tests/test_anki_package.py`) — unzips the `.apkg` and
   reads its SQLite collection back the way Anki would: the seven fields in
-  order, deck and tags kept out of the fields, a row per deck, and a re-export
-  updating a note instead of duplicating it.
+  order, deck and tags kept out of the fields, a row per deck, a re-export
+  updating a note instead of duplicating it, and two builds of the same table
+  coming out byte-identical.
 * **The model call** (`tests/test_claude_parser.py`) — the request shape and
   schema, plus each failure mode: a truncated response, a rejected key, a server
   error, a rate limit.
-* **That the app renders** (`tests/test_app_smoke.py`) — a Streamlit script only
-  executes when a session connects, so importing `app.py` or curling the port
-  will not notice a crash at render time. This runs the script the way a browser
-  session does.
+* **That the app renders, and its downloads still work** (`tests/test_app_smoke.py`)
+  — a Streamlit script only executes when a session connects, so importing
+  `app.py` or curling the port will not notice a crash at render time. This runs
+  the script the way a browser session does. It also pins the bug that shipped
+  once already: a download button's URL must survive a rerun. That check
+  advances the clock deliberately, because two runs inside the same second hide
+  the fault — which is exactly how it got past the suite the first time.
 
 CI runs the same commands on every push and pull request.
 

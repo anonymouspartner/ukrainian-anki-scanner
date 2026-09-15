@@ -5,9 +5,11 @@ A downloaded CSV is inert on a phone — nothing registers a handler for
 back out the way Anki would: it is a zip holding an SQLite collection.
 """
 
+import hashlib
 import io
 import json
 import sqlite3
+import time
 import zipfile
 
 import pandas as pd
@@ -21,6 +23,7 @@ from anki_package import (
     is_available,
     split_tags,
     stable_id,
+    ZIP_ENTRY_DATE,
 )
 
 pytestmark = pytest.mark.skipif(not is_available(), reason="genanki is not installed")
@@ -185,3 +188,36 @@ def test_ids_sit_in_the_range_anki_expects():
 ])
 def test_split_tags(value, expected):
     assert split_tags(value) == expected
+
+
+# --- Determinism --------------------------------------------------------------
+
+def test_building_the_same_table_twice_gives_identical_bytes():
+    # Streamlit identifies a download by hashing its bytes. genanki stamps both
+    # the ids it generates and the zip entries it writes with the wall clock, so
+    # left alone the package drifts build to build — which on every rerun minted
+    # a new media file, orphaned the previous one, and left the deck button
+    # pointing at a URL Streamlit had already garbage-collected.
+    first, _ = build_apkg(pd.DataFrame([card(), card(lemma="слово")]))
+    time.sleep(1.1)  # zip entry dates have two-second resolution
+    second, _ = build_apkg(pd.DataFrame([card(), card(lemma="слово")]))
+    assert hashlib.sha256(first).hexdigest() == hashlib.sha256(second).hexdigest()
+
+
+def test_different_cards_still_give_different_bytes():
+    one, _ = build_apkg(pd.DataFrame([card()]))
+    two, _ = build_apkg(pd.DataFrame([card(lemma_translation="tome")]))
+    assert one != two
+
+
+def test_zip_entry_dates_are_fixed(tmp_path):
+    data, _ = build_apkg(pd.DataFrame([card()]))
+    dates = {info.date_time for info in zipfile.ZipFile(io.BytesIO(data)).infolist()}
+    assert dates == {ZIP_ENTRY_DATE}
+
+
+def test_a_hermetic_build_is_still_a_readable_collection(tmp_path):
+    # The fixed clock and repacked zip must not cost us the actual notes.
+    data, _ = build_apkg(pd.DataFrame([card()]))
+    [(_, _, fields)] = notes_in(collection_of(data, tmp_path))
+    assert fields[0] == "книга"

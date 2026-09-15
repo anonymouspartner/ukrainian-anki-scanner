@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import csv
 import datetime as dt
+import hashlib
 import io
 
 import pandas as pd
@@ -101,14 +102,35 @@ def build_csv(df: pd.DataFrame) -> tuple[str, int]:
     return ANKI_HEADER + buffer.getvalue(), len(rows)
 
 
-def export_filename(extension: str, now: dt.datetime | None = None) -> str:
-    """A filename that has not been used by a previous download.
+def export_stamp(content: str, cache: dict, now: dt.datetime | None = None) -> str:
+    """A timestamp that changes when the export changes, and only then.
 
-    A fixed name makes every export after the first collide with the one
-    already sitting in the phone's download folder, and Android Chrome answers
-    a collision with a "Download file again?" dialog on every single tap. A
-    timestamp sidesteps that, and incidentally keeps the exports of several
-    scanning sessions distinguishable in the folder.
+    It is tempting to just call `datetime.now()` at render time, but that is a
+    trap. Streamlit reruns this script on every interaction, and it identifies
+    a download button's file by hashing the bytes *and the filename* together.
+    A filename holding the current time therefore mints a brand-new file on
+    every rerun and orphans the previous one — which Streamlit's media garbage
+    collector then deletes, leaving the button the user is looking at pointing
+    at a URL that 404s. The tap does nothing and reports nothing.
+
+    So the clock is read once per distinct export and held until the cards
+    change. `cache` is a single-entry store the caller owns (session state),
+    which keeps this a plain function and keeps the store from growing with
+    every keystroke in the review table.
     """
-    stamp = (now or dt.datetime.now()).strftime("%Y%m%d-%H%M%S")
+    key = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    if cache.get("key") != key:
+        cache["key"] = key
+        cache["stamp"] = (now or dt.datetime.now()).strftime("%Y%m%d-%H%M%S")
+    return cache["stamp"]
+
+
+def export_filename(extension: str, stamp: str) -> str:
+    """The name a download lands under in the phone's download folder.
+
+    A fixed name collides with the copy already there, and Android Chrome
+    meets a collision with a "Download file again?" dialog on every single
+    tap. The stamp comes from `export_stamp`, so successive exports differ
+    while repeated renders of the same export do not.
+    """
     return f"ukrainian_vocab_capybara_{stamp}.{extension.lstrip('.')}"

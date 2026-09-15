@@ -6,13 +6,24 @@ import pandas as pd
 import streamlit as st
 from PIL import Image
 
-from anki_export import EXPORT_COLUMNS, build_csv, dedupe_cards, export_filename
+from anki_export import EXPORT_COLUMNS, build_csv, dedupe_cards, export_filename, export_stamp
 from anki_package import build_apkg, is_available as apkg_available
 from claude_parser import PageExtractionError, optimize_image, process_book_page
 
 st.set_page_config(page_title="Ukrainian Book to Anki", page_icon="📚", layout="wide")
 
 MAX_WORKERS = 3
+
+
+@st.cache_data(show_spinner=False, max_entries=4)
+def build_package(df: pd.DataFrame) -> tuple[bytes, int]:
+    """Cached so editing one cell does not rebuild the whole archive.
+
+    The build is a pure function of the table, so caching it is safe and keeps
+    the bytes identical across reruns — which is also what stops Streamlit
+    re-registering the download on every interaction.
+    """
+    return build_apkg(df)
 
 
 def read_secret(name: str) -> str:
@@ -47,6 +58,11 @@ if "queue_signature" not in st.session_state:
     st.session_state.queue_signature = None
 if "cards" not in st.session_state:
     st.session_state.cards = []
+if "export_stamp_cache" not in st.session_state:
+    # Holds the timestamp the current export is named with. See export_stamp:
+    # a name that changes on every rerun makes Streamlit garbage-collect the
+    # file out from under the download button.
+    st.session_state.export_stamp_cache = {}
 
 st.title("📚 Ukrainian Book Highlight Scanner for Anki")
 st.write("Upload multiple book page photos at once to extract vocabulary directly into your **Capybara** Anki CSV format using **Claude Sonnet 5**.")
@@ -181,9 +197,12 @@ if st.session_state.cards:
     package_error = None
     if apkg_available() and row_count:
         try:
-            package_bytes, _ = build_apkg(edited_df)
+            package_bytes, _ = build_package(edited_df)
         except Exception as e:  # noqa: BLE001 - CSV still works, so degrade to it
             package_error = str(e)
+
+    # One stamp for both files: they are two renderings of the same export.
+    stamp = export_stamp(final_csv, st.session_state.export_stamp_cache)
 
     col_apkg, col_csv = st.columns(2)
 
@@ -191,7 +210,7 @@ if st.session_state.cards:
         st.download_button(
             label=f"📦 Download Anki Deck ({row_count} cards)",
             data=package_bytes or b"",
-            file_name=export_filename("apkg"),
+            file_name=export_filename("apkg", stamp),
             mime="application/vnd.anki",
             disabled=package_bytes is None,
             key="download_apkg",
@@ -203,7 +222,7 @@ if st.session_state.cards:
         st.download_button(
             label=f"📥 Download Anki CSV ({row_count} cards)",
             data=final_csv.encode("utf-8"),
-            file_name=export_filename("csv"),
+            file_name=export_filename("csv", stamp),
             mime="text/csv",
             disabled=row_count == 0,
             key="download_csv",

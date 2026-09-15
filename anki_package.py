@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import io
 import re
+import zipfile
 
 import pandas as pd
 
@@ -28,6 +29,18 @@ except ImportError:  # pragma: no cover - exercised by the availability check
     genanki = None
 
 NOTE_TYPE_NAME = "Capybara"
+
+# A fixed build clock. genanki defaults to time.time() for the note and card
+# ids it generates, and the zip it writes picks up the temp file's mtime, so
+# two builds of the same table come out as different bytes. That matters more
+# than it sounds: Streamlit identifies a download by hashing its bytes, so
+# bytes that drift on every rerun mint a new file each time and orphan the
+# previous one, and the button ends up pointing at a URL its garbage collector
+# has already deleted. Building against a fixed clock makes the package a pure
+# function of the cards in it. Anki re-assigns ids on import and de-duplicates
+# on guid, so a constant here costs nothing.
+HERMETIC_TIMESTAMP = 1700000000.0
+ZIP_ENTRY_DATE = (1980, 1, 1, 0, 0, 0)  # the earliest a zip entry can express
 
 # The seven content fields of a Capybara note. "deck" and "tags" are not fields
 # — a package carries the deck in its own structure and the tags on each note —
@@ -155,5 +168,24 @@ def build_apkg(df: pd.DataFrame) -> tuple[bytes, int]:
         ))
 
     buffer = io.BytesIO()
-    genanki.Package(list(decks.values())).write_to_file(buffer)
-    return buffer.getvalue(), len(rows)
+    genanki.Package(list(decks.values())).write_to_file(buffer, timestamp=HERMETIC_TIMESTAMP)
+    return _with_fixed_entry_dates(buffer.getvalue()), len(rows)
+
+
+def _with_fixed_entry_dates(package: bytes) -> bytes:
+    """Repack the archive with fixed entry timestamps.
+
+    `write_to_file(timestamp=...)` fixes what goes *into* the collection, but
+    the zip entries still carry the wall-clock mtime of the temp file genanki
+    wrote, which leaves the bytes drifting build to build. Anki reads the
+    entries by name and ignores their dates.
+    """
+    source = zipfile.ZipFile(io.BytesIO(package))
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as target:
+        for entry in source.infolist():
+            fixed = zipfile.ZipInfo(entry.filename, date_time=ZIP_ENTRY_DATE)
+            fixed.compress_type = entry.compress_type
+            fixed.external_attr = entry.external_attr
+            target.writestr(fixed, source.read(entry.filename))
+    return out.getvalue()
