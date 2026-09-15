@@ -6,7 +6,8 @@ import pandas as pd
 import streamlit as st
 from PIL import Image
 
-from anki_export import EXPORT_COLUMNS, build_csv, dedupe_cards
+from anki_export import EXPORT_COLUMNS, build_csv, dedupe_cards, export_filename
+from anki_package import build_apkg, is_available as apkg_available
 from claude_parser import PageExtractionError, optimize_image, process_book_page
 
 st.set_page_config(page_title="Ukrainian Book to Anki", page_icon="📚", layout="wide")
@@ -170,10 +171,53 @@ if st.session_state.cards:
 
     final_csv, row_count = build_csv(edited_df)
 
-    st.download_button(
-        label=f"📥 Download Anki CSV ({row_count} cards)",
-        data=final_csv.encode("utf-8"),
-        file_name="ukrainian_vocab_capybara.csv",
-        mime="text/csv",
-        disabled=row_count == 0,
+    # Two ways out, because the two platforms want different files. AnkiDroid
+    # registers itself as a handler for .apkg but not for text/csv, so on a
+    # phone the deck package opens straight from the download notification
+    # while a CSV has to be chased down through AnkiDroid's own import screen.
+    # On a desktop the CSV is the one that drops into an existing Capybara
+    # note type instead of bringing its own along.
+    package_bytes = None
+    package_error = None
+    if apkg_available() and row_count:
+        try:
+            package_bytes, _ = build_apkg(edited_df)
+        except Exception as e:  # noqa: BLE001 - CSV still works, so degrade to it
+            package_error = str(e)
+
+    col_apkg, col_csv = st.columns(2)
+
+    with col_apkg:
+        st.download_button(
+            label=f"📦 Download Anki Deck ({row_count} cards)",
+            data=package_bytes or b"",
+            file_name=export_filename("apkg"),
+            mime="application/vnd.anki",
+            disabled=package_bytes is None,
+            key="download_apkg",
+            help="Best on a phone: tap the downloaded file to import it straight into AnkiDroid.",
+            use_container_width=True,
+        )
+
+    with col_csv:
+        st.download_button(
+            label=f"📥 Download Anki CSV ({row_count} cards)",
+            data=final_csv.encode("utf-8"),
+            file_name=export_filename("csv"),
+            mime="text/csv",
+            disabled=row_count == 0,
+            key="download_csv",
+            help="Best on a desktop: imports into a Capybara note type you already have.",
+            use_container_width=True,
+        )
+
+    st.caption(
+        "On a phone take the **deck**: tapping the downloaded .apkg opens it straight "
+        "into AnkiDroid. On a desktop take the **CSV** if you already have a Capybara "
+        "note type you want these notes to land in."
     )
+
+    if package_error:
+        st.warning(f"The deck package could not be built, so only the CSV is available: {package_error}")
+    elif not apkg_available():
+        st.info("Install `genanki` (`pip install -r requirements.txt`) to also export a one-tap .apkg deck.")

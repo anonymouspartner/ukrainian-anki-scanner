@@ -7,6 +7,7 @@ Streamlit script.
 from __future__ import annotations
 
 import csv
+import datetime as dt
 import io
 
 import pandas as pd
@@ -70,6 +71,21 @@ def dedupe_cards(cards: list[dict]) -> tuple[list[dict], int]:
     return list(merged.values()), duplicates
 
 
+def export_rows(df: pd.DataFrame) -> list[dict]:
+    """Clean the edited table down to the rows worth exporting.
+
+    Shared by both exporters so the CSV and the .apkg always contain the same
+    cards: same cleaning, same dropped rows, same count on the button label.
+    """
+    rows = []
+    for _, row in df.iterrows():
+        fields = {column: clean_field(row.get(column)) for column in EXPORT_COLUMNS}
+        if not fields["lemma"]:
+            continue  # A row with no lemma is an empty row the editor added.
+        rows.append(fields)
+    return rows
+
+
 def build_csv(df: pd.DataFrame) -> tuple[str, int]:
     """Render the edited table as a Capybara-note-type CSV.
 
@@ -77,14 +93,22 @@ def build_csv(df: pd.DataFrame) -> tuple[str, int]:
     unambiguous, that keeps a row whose first field starts with "#" from being
     read as an import directive and silently dropped.
     """
-    rows = []
-    for _, row in df.iterrows():
-        fields = [clean_field(row.get(column)) for column in EXPORT_COLUMNS]
-        if not fields[0]:
-            continue  # A row with no lemma is an empty row the editor added.
-        rows.append(fields)
+    rows = export_rows(df)
 
     buffer = io.StringIO()
     writer = csv.writer(buffer, quoting=csv.QUOTE_ALL, lineterminator="\n")
-    writer.writerows(rows)
+    writer.writerows([[row[column] for column in EXPORT_COLUMNS] for row in rows])
     return ANKI_HEADER + buffer.getvalue(), len(rows)
+
+
+def export_filename(extension: str, now: dt.datetime | None = None) -> str:
+    """A filename that has not been used by a previous download.
+
+    A fixed name makes every export after the first collide with the one
+    already sitting in the phone's download folder, and Android Chrome answers
+    a collision with a "Download file again?" dialog on every single tap. A
+    timestamp sidesteps that, and incidentally keeps the exports of several
+    scanning sessions distinguishable in the folder.
+    """
+    stamp = (now or dt.datetime.now()).strftime("%Y%m%d-%H%M%S")
+    return f"ukrainian_vocab_capybara_{stamp}.{extension.lstrip('.')}"

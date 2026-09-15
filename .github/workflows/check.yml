@@ -44,7 +44,7 @@ jobs:
 
       # Catches a syntax error in any file, including one no test imports.
       - name: Byte-compile every source file
-        run: python -m compileall -q app.py anki_export.py claude_parser.py tests
+        run: python -m compileall -q app.py anki_export.py anki_package.py claude_parser.py tests
 
       - name: Run tests
         run: python -m pytest tests -v

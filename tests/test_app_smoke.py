@@ -48,6 +48,22 @@ def test_environment_key_is_picked_up_when_present(monkeypatch, tmp_path):
     assert at.sidebar.text_input[0].value == "sk-ant-from-env"
 
 
+def _app_with_one_card(monkeypatch, tmp_path) -> AppTest:
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.chdir(tmp_path)
+    at = AppTest.from_file(APP, default_timeout=60)
+    at.session_state["cards"] = [{
+        "lemma": "книга", "gloss": "book", "lemma_translation": "book",
+        "part_of_speech": "noun", "language": "uk", "example": "Книга тут.",
+        "example_translation": "The book is here.",
+        "deck": "Capybara::Ukrainian", "tags": "capybara::vocab",
+        "source": "page1.jpg",
+    }]
+    at.run()
+    assert not at.exception, at.exception[0].value if at.exception else ""
+    return at
+
+
 def test_review_table_and_export_appear_once_cards_exist(monkeypatch, tmp_path):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.chdir(tmp_path)
@@ -62,5 +78,19 @@ def test_review_table_and_export_appear_once_cards_exist(monkeypatch, tmp_path):
     at.run()
     assert not at.exception, at.exception[0].value if at.exception else ""
     assert any("Export Anki Cards" in header.value for header in at.subheader)
-    [download] = at.download_button
-    assert "1 cards" in download.label
+    labels = [download.label for download in at.download_button]
+    assert len(labels) == 2, labels
+    assert all("1 cards" in label for label in labels)
+
+
+def test_a_deck_package_is_offered_alongside_the_csv(monkeypatch, tmp_path):
+    # AnkiDroid handles .apkg but not text/csv, so the phone route only exists
+    # if the deck package is actually served.
+    at = _app_with_one_card(monkeypatch, tmp_path)
+    extensions = {d.proto.url.rsplit(".", 1)[-1] for d in at.download_button}
+    assert extensions == {"apkg", "csv"}
+
+
+def test_neither_export_is_disabled_when_there_is_a_card(monkeypatch, tmp_path):
+    at = _app_with_one_card(monkeypatch, tmp_path)
+    assert not any(d.proto.disabled for d in at.download_button)
