@@ -7,10 +7,14 @@ documented Codespaces flow for exactly that reason. AppTest runs the script the
 way a browser session does, headlessly.
 """
 
+import datetime as dt
 import pathlib
+import types
 
 import pytest
 from streamlit.testing.v1 import AppTest
+
+import anki_export
 
 APP = str(pathlib.Path(__file__).resolve().parent.parent / "app.py")
 
@@ -94,3 +98,35 @@ def test_a_deck_package_is_offered_alongside_the_csv(monkeypatch, tmp_path):
 def test_neither_export_is_disabled_when_there_is_a_card(monkeypatch, tmp_path):
     at = _app_with_one_card(monkeypatch, tmp_path)
     assert not any(d.proto.disabled for d in at.download_button)
+
+
+def test_a_downloads_url_survives_a_rerun(monkeypatch, tmp_path):
+    """The bug that shipped: tapping a download button did nothing at all.
+
+    Streamlit identifies a download file by hashing its bytes together with its
+    filename, and serves it at a URL derived from that hash. Both inputs were
+    moving on every rerun — the filename held the current time, and genanki
+    stamped the .apkg with the wall clock — so each rerun registered a new file
+    and orphaned the one the on-screen button still pointed at. Streamlit's
+    media garbage collector then deleted it, and the tap fetched a 404, which
+    the browser reports as nothing whatsoever.
+
+    The clock is advanced between runs on purpose. Without that this test
+    passes against the bug, because two runs land in the same second and the
+    filename happens not to change — which is exactly why the bug survived the
+    original suite and shipped.
+    """
+    ticking = iter(dt.datetime(2026, 9, 15, 18, 49, 3) + dt.timedelta(minutes=n)
+                   for n in range(100))
+    monkeypatch.setattr(
+        anki_export, "dt",
+        types.SimpleNamespace(datetime=types.SimpleNamespace(now=lambda: next(ticking))),
+    )
+
+    at = _app_with_one_card(monkeypatch, tmp_path)
+    before = [download.proto.url for download in at.download_button]
+
+    at.run()  # any interaction at all re-executes the script
+    after = [download.proto.url for download in at.download_button]
+
+    assert before == after, "download URL changed across a rerun; the old one is now a 404"
