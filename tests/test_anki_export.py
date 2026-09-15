@@ -1,11 +1,20 @@
 """Export rules: what makes a row survive the trip into Anki intact."""
 
 import csv
+import datetime as dt
 
 import pandas as pd
 import pytest
 
-from anki_export import ANKI_HEADER, EXPORT_COLUMNS, build_csv, clean_field, dedupe_cards
+from anki_export import (
+    ANKI_HEADER,
+    EXPORT_COLUMNS,
+    build_csv,
+    clean_field,
+    dedupe_cards,
+    export_filename,
+    export_rows,
+)
 
 
 def card(**overrides) -> dict:
@@ -136,3 +145,36 @@ def test_header_declares_the_columns_in_export_order():
 ])
 def test_clean_field(value, expected):
     assert clean_field(value) == expected
+
+
+# --- export_filename ----------------------------------------------------------
+
+def test_filename_is_not_the_same_from_one_export_to_the_next():
+    # A repeated name collides with the copy already in the phone's download
+    # folder, and Android Chrome meets every collision with a "Download file
+    # again?" dialog — the reason this function exists.
+    first = export_filename("csv", dt.datetime(2026, 9, 15, 18, 49, 3))
+    second = export_filename("csv", dt.datetime(2026, 9, 15, 18, 49, 4))
+    assert first != second
+
+
+def test_filename_keeps_the_extension_it_is_given():
+    stamp = dt.datetime(2026, 9, 15, 18, 49, 3)
+    assert export_filename("csv", stamp) == "ukrainian_vocab_capybara_20260915-184903.csv"
+    assert export_filename(".apkg", stamp).endswith("_20260915-184903.apkg")
+
+
+def test_filename_sorts_chronologically_in_a_download_folder():
+    earlier = export_filename("csv", dt.datetime(2026, 9, 15, 9, 5, 0))
+    later = export_filename("csv", dt.datetime(2026, 9, 15, 18, 49, 0))
+    assert earlier < later
+
+
+# --- export_rows --------------------------------------------------------------
+
+def test_both_exporters_see_the_same_rows():
+    blank = {column: "" for column in EXPORT_COLUMNS}
+    rows = export_rows(pd.DataFrame([card(), blank, card(lemma="слово")]))
+    _, csv_count = build_csv(pd.DataFrame([card(), blank, card(lemma="слово")]))
+    assert len(rows) == csv_count == 2
+    assert [row["lemma"] for row in rows] == ["книга", "слово"]
